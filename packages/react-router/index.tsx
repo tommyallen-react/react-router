@@ -168,8 +168,9 @@ export function Navigate({ to, replace, state }: NavigateProps): null {
   warning(
     !React.useContext(LocationContext).static,
     `<Navigate> must not be used on the initial render in a <StaticRouter>. ` +
-      `This is a no-op, but you should modify your code so the <Navigate> is ` +
-      `only ever rendered in response to some user interaction or state change.`
+      `This is a no-op, but you should modify your code so the <Navigate> ` +
+      `is only ever rendered in response to some user interaction or state ` +
+      `change.`
   );
 
   let navigate = useNavigate();
@@ -608,6 +609,47 @@ function useRoutes_(
 // UTILS
 ///////////////////////////////////////////////////////////////////////////////
 
+function sanitizeRoute(
+  partialRoute: PartialRouteObject,
+  parentPath?: string
+): RouteObject {
+  let route: RouteObject = {
+    path: partialRoute.path || "",
+    caseSensitive: partialRoute.caseSensitive === true,
+    index: partialRoute.index === true,
+    // This is the same as default value of <Route element>
+    element: partialRoute.element || <Outlet />
+  };
+
+  // Check for absolute path
+  if (parentPath && route.path.startsWith("/")) {
+    // Throw if absolute path doesn't start with the same substring as the parent route
+    invariant(
+      route.path.startsWith(parentPath),
+      `Absolute <Route path="${route.path}"> must begin ` +
+        `with its parent path "${parentPath}", otherwise it ` +
+        `will be unreachable.`
+    );
+    // Construct relative path
+    route.path = route.path.slice(parentPath.length + 1);
+  }
+
+  // If the route has children, throw if it is an index. Index routes should
+  // never have children!
+  if (partialRoute.children && partialRoute.children.length > 0) {
+    invariant(
+      !route.index,
+      `Index route for <Route path="${parentPath}"> must ` +
+        `not have children. If you want the route to be a layout ` +
+        `for its child routes, remove the \`index\` prop.`
+    );
+    route.children = partialRoute.children.map(partialChild =>
+      sanitizeRoute(partialChild, route.path)
+    );
+  }
+  return route;
+}
+
 /**
  * Creates a route config from an array of JavaScript objects. Used internally
  * by `useRoutes` to normalize the route config.
@@ -617,21 +659,7 @@ function useRoutes_(
 export function createRoutesFromArray(
   array: PartialRouteObject[]
 ): RouteObject[] {
-  return array.map(partialRoute => {
-    let route: RouteObject = {
-      path: partialRoute.path || "",
-      caseSensitive: partialRoute.caseSensitive === true,
-      index: partialRoute.index === true,
-      // This is the same as default value of <Route element>
-      element: partialRoute.element || <Outlet />
-    };
-
-    if (partialRoute.children) {
-      route.children = createRoutesFromArray(partialRoute.children);
-    }
-
-    return route;
-  });
+  return array.map(partialRoute => sanitizeRoute(partialRoute));
 }
 
 /**
@@ -644,7 +672,7 @@ export function createRoutesFromArray(
 export function createRoutesFromChildren(
   children: React.ReactNode
 ): RouteObject[] {
-  let routes: RouteObject[] = [];
+  let routes: PartialRouteObject[] = [];
 
   React.Children.forEach(children, element => {
     if (!React.isValidElement(element)) {
@@ -662,13 +690,10 @@ export function createRoutesFromChildren(
       return;
     }
 
-    let route: RouteObject = {
-      path: element.props.path || "",
-      caseSensitive: element.props.caseSensitive === true,
-      index: element.props.index === true,
-      // Default behavior is to just render the element that was given. This
-      // permits people to use any element they prefer, not just <Route> (though
-      // all our official examples and docs use <Route> for clarity).
+    let route: PartialRouteObject = {
+      path: element.props.path,
+      caseSensitive: element.props.caseSensitive,
+      index: element.props.index,
       element
     };
 
@@ -682,7 +707,7 @@ export function createRoutesFromChildren(
     routes.push(route);
   });
 
-  return routes;
+  return routes.map(partialRoute => sanitizeRoute(partialRoute));
 }
 
 /**
@@ -741,7 +766,6 @@ export function matchRoutes(
   if (typeof location === "string") {
     location = parsePath(location);
   }
-
   return matchRoutes_(createRoutesFromArray(routes), location, basename);
 }
 
@@ -787,20 +811,7 @@ function flattenRoutes(
   parentIndexes: number[] = []
 ): RouteBranch[] {
   routes.forEach((route, index) => {
-    let path: string;
-    if (route.path.startsWith("/")) {
-      invariant(
-        route.path.startsWith(parentPath),
-        `Absolute <Route path="${route.path}"> must begin ` +
-          `with its parent path "${parentPath}", otherwise it ` +
-          `will be unreachable.`
-      );
-
-      path = route.path;
-    } else {
-      path = joinPaths([parentPath, route.path]);
-    }
-
+    let path = joinPaths([parentPath, route.path]);
     let routes = parentRoutes.concat(route);
     let indexes = parentIndexes.concat(index);
 
@@ -808,13 +819,6 @@ function flattenRoutes(
     // route tree depth-first and child routes appear before their parents in
     // the "flattened" version.
     if (route.children && route.children.length > 0) {
-      invariant(
-        !route.index,
-        `Index route for <Route path="${parentPath}"> must ` +
-          `not have children. If you want the route to be a layout ` +
-          `for its child routes, remove the \`index\` prop.`
-      );
-
       flattenRoutes(route.children, branches, path, routes, indexes);
     }
 
