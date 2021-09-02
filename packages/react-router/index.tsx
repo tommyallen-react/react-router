@@ -790,7 +790,7 @@ function flattenRoutes(
     let path: string;
     if (route.path.startsWith("/")) {
       invariant(
-        !(parentPath && !route.path.startsWith(parentPath)),
+        route.path.startsWith(parentPath),
         `Absolute <Route path="${route.path}"> must begin ` +
           `with its parent path "${parentPath}", otherwise it ` +
           `will be unreachable.`
